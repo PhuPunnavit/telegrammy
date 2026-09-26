@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "TG Downloader - Telegram Media Downloader",
+  "version": "1.0.0",
+  "description": "Download videos, photos, voice notes, and stories from Telegram Web, even save-restricted media.",
+  "permissions": [
+    "downloads",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://web.telegram.org/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TG Media Downloader",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.telegram.org/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["https://web.telegram.org/*"]
+    }
+  ]
+}

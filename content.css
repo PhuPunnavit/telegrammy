@@ -1,0 +1,231 @@
+.tg-dl-quick-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 9999;
+  background: rgba(36, 129, 204, 0.92);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+
+.tg-dl-quick-btn:hover {
+  background: #1c73b9;
+  transform: translateY(-1px);
+}
+
+.tg-dl-quick-btn.loading {
+  background: #e67e22 !important;
+  cursor: wait !important;
+  opacity: 0.95;
+}
+
+.tg-dl-quick-btn.success {
+  background: #27ae60 !important;
+}
+
+.tg-dl-quick-btn.error {
+  background: #e74c3c !important;
+}
+
+.tg-dl-floating-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100000;
+  background: #2481cc;
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 24px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.tg-dl-floating-btn:hover {
+  background: #1a6fb0;
+  transform: scale(1.04);
+}
+
+.tg-badge {
+  background: #ffffff;
+  color: #2481cc;
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Modal Drawer */
+.tg-dl-drawer {
+  position: fixed;
+  bottom: 74px;
+  right: 24px;
+  width: 380px;
+  max-height: 520px;
+  background: #1f2730;
+  color: #e5eaf0;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  z-index: 100001;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.tg-dl-drawer.hidden {
+  display: none !important;
+}
+
+.tg-dl-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tg-dl-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #64b5f6;
+}
+
+.tg-dl-close {
+  background: none;
+  border: none;
+  color: #a0acb9;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.tg-dl-close:hover {
+  color: #fff;
+}
+
+.tg-dl-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.tg-dl-actions button {
+  background: #2b3642;
+  color: #cfd8dc;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tg-dl-actions button:hover {
+  background: #394756;
+}
+
+.tg-dl-actions button.tg-btn-primary {
+  background: #2481cc;
+  color: #fff;
+  border: none;
+  margin-left: auto;
+  font-weight: 600;
+}
+
+.tg-dl-actions button.tg-btn-primary:hover {
+  background: #1c73b9;
+}
+
+.tg-dl-list {
+  overflow-y: auto;
+  padding: 8px 12px;
+  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tg-media-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #27313d;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.tg-item-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.tg-media-icon {
+  font-size: 18px;
+}
+
+.tg-media-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tg-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tg-date {
+  font-size: 10px;
+  color: #90a4ae;
+}
+
+.tg-single-dl {
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: #64b5f6;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tg-single-dl:hover {
+  background: #2481cc;
+  color: #fff;
+}
+
+.tg-empty-hint {
+  text-align: center;
+  padding: 24px 12px;
+  color: #8393a3;
+  font-size: 13px;
+}
