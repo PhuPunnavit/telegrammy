@@ -144,16 +144,12 @@
     return blobUrl;
   };
 
-  // Block URL revocation but call original to avoid breaking page expectations
+  // Block URL revocation - silently ignore all revocation attempts
   const origRevokeObjectURL = URL.revokeObjectURL;
   URL.revokeObjectURL = function(url) {
-    console.log('[TG] Revoke blocked (but called):', url?.substring(0, 30));
-    // Call original to satisfy page expectations
-    try {
-      origRevokeObjectURL.call(this, url);
-    } catch (e) {
-      // Ignore errors
-    }
+    console.log('[TG] Revoke blocked:', url?.substring(0, 30));
+    // Don't call original - silently block revocation to preserve blobs
+    // origRevokeObjectURL.call(this, url);
   };
 
   // ── Blob storage with memory management ───────────────────────────────────────
@@ -314,10 +310,11 @@
 
     setTimeout(() => {
       a.remove();
-      origRevokeObjectURL.call(URL, downloadUrl);
+      // Don't revoke blob URL - browser may still be downloading
+      // origRevokeObjectURL.call(URL, downloadUrl);
       console.log('[TG] ✓ Download complete!');
       console.log('[TG] ===== DOWNLOAD DEBUG END =====');
-    }, 1000);
+    }, 5000);
   }
 
   function _notify(payload) {

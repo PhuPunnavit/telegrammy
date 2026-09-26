@@ -230,8 +230,16 @@
 
         let fileType = 'video/mp4';
         const tag = node.tagName.toLowerCase();
-        if (tag === 'audio') fileType = 'audio/mp3';
-        else if (tag === 'img') fileType = 'image/jpeg';
+        if (tag === 'audio') {
+          fileType = 'audio/mpeg';
+          const source = node.querySelector('source');
+          if (source?.type) fileType = source.type;
+        } else if (tag === 'img') {
+          fileType = 'image/jpeg';
+        } else if (tag === 'video') {
+          const source = node.querySelector('source');
+          if (source?.type) fileType = source.type;
+        }
 
         const ext = getMediaExtension(fileType);
         triggerDownload(src, `tg_${Date.now()}${ext}`, fileType);
