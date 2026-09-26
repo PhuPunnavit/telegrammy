@@ -196,26 +196,30 @@
     let blob = null;
     let mimeType = 'video/mp4';
 
-    console.log('[TG] Looking for:', requestUrl?.substring(0, 40));
-    console.log('[TG] Available URLs:', Array.from(storedBlobs.keys()).map(u => u.substring(0, 40)));
+    console.log('[TG] ===== DOWNLOAD DEBUG START =====');
+    console.log('[TG] Looking for:', requestUrl?.substring(0, 60));
+    console.log('[TG] Total blobs stored:', storedBlobs.size);
+    console.log('[TG] Available URLs:', Array.from(storedBlobs.keys()).map(u => u.substring(0, 50)));
 
     // Strategy 1: Direct lookup
     if (requestUrl && storedBlobs.has(requestUrl)) {
       const stored = storedBlobs.get(requestUrl);
       blob = stored.blob;
       mimeType = stored.type;
-      console.log('[TG] Strategy 1: Direct match');
+      console.log('[TG] ✓ Strategy 1: Direct match found!');
     }
 
     // Strategy 2: Try fetching HTTP URL
     if (!blob && requestUrl && !requestUrl.startsWith('data:') && !requestUrl.startsWith('blob:')) {
       try {
-        console.log('[TG] Strategy 2: Fetching HTTP URL...');
+        console.log('[TG] Strategy 2: Attempting to fetch HTTP URL...');
         const response = await fetch(requestUrl, { credentials: 'include' });
         if (response.ok) {
           blob = await response.blob();
           mimeType = response.headers.get('content-type') || blob.type || 'video/mp4';
-          console.log('[TG] Strategy 2: Fetched', mimeType, blob.size);
+          console.log('[TG] ✓ Strategy 2: Fetched successfully - size:', blob.size, 'type:', mimeType);
+        } else {
+          console.log('[TG] Strategy 2 failed: HTTP', response.status);
         }
       } catch (err) {
         console.log('[TG] Strategy 2 failed:', err.message);
@@ -226,13 +230,14 @@
     if (!blob && requestUrl) {
       try {
         const reqUrl = new URL(requestUrl);
+        console.log('[TG] Strategy 3: Searching by pathname:', reqUrl.pathname);
         for (const [storedUrl, data] of storedBlobs) {
           try {
             const sUrl = new URL(storedUrl);
             if (sUrl.pathname === reqUrl.pathname) {
               blob = data.blob;
               mimeType = data.type;
-              console.log('[TG] Strategy 3: Pathname match');
+              console.log('[TG] ✓ Strategy 3: Pathname match found!');
               break;
             }
           } catch (e) {
@@ -240,7 +245,7 @@
           }
         }
       } catch (e) {
-        // requestUrl not a valid URL
+        console.log('[TG] Strategy 3 failed - requestUrl not valid URL:', e.message);
       }
     }
 
@@ -254,23 +259,28 @@
         expectedType = 'image/';
       }
 
+      console.log('[TG] Strategy 4: Looking for type:', expectedType);
       let latestTime = 0;
       let latestBlob = null;
       for (const [url, data] of storedBlobs) {
-        if (data.type.startsWith(expectedType) && data.timestamp > latestTime) {
-          latestTime = data.timestamp;
-          latestBlob = data;
+        if (data.type.startsWith(expectedType)) {
+          console.log('[TG]   Found matching type:', data.type, 'timestamp:', data.timestamp);
+          if (data.timestamp > latestTime) {
+            latestTime = data.timestamp;
+            latestBlob = data;
+          }
         }
       }
       if (latestBlob) {
         blob = latestBlob.blob;
         mimeType = latestBlob.type;
-        console.log('[TG] Strategy 4: Latest matching type');
+        console.log('[TG] ✓ Strategy 4: Latest matching type found! Size:', blob.size);
       }
     }
 
     if (!blob) {
-      console.error('[TG] No media found');
+      console.error('[TG] ✗ FAILED: No media found after all strategies!');
+      console.log('[TG] ===== DOWNLOAD DEBUG END =====');
       alert('Media not found. Please play the video first, then try again.');
       return;
     }
@@ -286,10 +296,12 @@
     let safeName = (filename || `tg_${Date.now()}`).replace(/[<>:"/\\|?*]/g, '_');
     if (!safeName.includes('.')) safeName += ext;
 
-    console.log('[TG] Downloading:', safeName, mimeType, blob.size);
+    console.log('[TG] ✓ Creating download - name:', safeName, 'size:', blob.size, 'type:', mimeType);
 
     // Use blob URL directly instead of data URL to avoid size limits
     const downloadUrl = origCreateObjectURL.call(URL, blob);
+    console.log('[TG] Blob URL created:', downloadUrl.substring(0, 50));
+
     const a = document.createElement('a');
     a.href = downloadUrl;
     a.download = safeName;
@@ -298,11 +310,13 @@
 
     // Use MouseEvent for better compatibility
     a.dispatchEvent(new MouseEvent('click'));
+    console.log('[TG] Download event dispatched');
 
     setTimeout(() => {
       a.remove();
       origRevokeObjectURL.call(URL, downloadUrl);
-      console.log('[TG] Download complete:', safeName);
+      console.log('[TG] ✓ Download complete!');
+      console.log('[TG] ===== DOWNLOAD DEBUG END =====');
     }, 1000);
   }
 
