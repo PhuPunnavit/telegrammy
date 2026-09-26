@@ -307,7 +307,7 @@
   }
 
   function _notify(payload) {
-    window.postMessage({ type: 'TG_MEDIA_DETECTED', payload }, window.location.origin);
+    window.postMessage({ type: 'TG_MEDIA_DETECTED', payload }, '*');
   }
 
   // Unblock context menu
