@@ -5,8 +5,7 @@
   "description": "Download videos, photos, voice notes, and stories from Telegram Web, even save-restricted media.",
   "permissions": [
     "downloads",
-    "storage",
-    "activeTab"
+    "storage"
   ],
   "host_permissions": [
     "https://web.telegram.org/*"
@@ -32,7 +31,9 @@
       "matches": ["https://web.telegram.org/*"],
       "js": ["content.js"],
       "css": ["content.css"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": false,
+      "match_about_blank": false
     }
   ],
   "web_accessible_resources": [
