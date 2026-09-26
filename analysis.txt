@@ -1,0 +1,83 @@
+TG DOWNLOADER EXTENSION - LOAD FAILURE ANALYSIS
+================================================
+
+1. MANIFEST V3 COMPLIANCE CHECK
+- manifest_version: 3 ✓
+- Permissions declared: ["downloads", "storage", "activeTab"] ✓
+- host_permissions declared: ["https://web.telegram.org/*"] ✓
+- Service worker declared: background.js ✓
+- web_accessible_resources declared: inject.js ✓
+- Content scripts declared: content.js ✓
+
+2. REFERENCED FILES EXISTENCE
+- popup.html: EXISTS ✓
+- background.js: EXISTS ✓
+- content.js: EXISTS ✓
+- inject.js: EXISTS ✓
+- content.css: EXISTS ✓
+- icon16.png: EXISTS ✓
+- icon48.png: EXISTS ✓
+- icon128.png: EXISTS ✓
+
+3. JAVASCRIPT SYNTAX
+- content.js: Valid ✓
+- inject.js: Valid ✓
+- background.js: Valid ✓
+- debug.js: Valid ✓
+
+4. CSS VALIDITY
+- content.css: Valid (checked visually) ✓
+
+5. CRITICAL ISSUE FOUND: CSP VIOLATION IN content.js
+Lines 156, 207, 220, 251, 255, 264: innerHTML usage
+- Problem: MV3 enforces strict CSP that blocks innerHTML with HTML strings
+- This will cause runtime errors and DOM injection failures
+- All the UI elements (buttons, drawer, floating button) will fail to render
+
+6. HTML CONTENT SECURITY ISSUE
+- popup.html uses inline <style> - acceptable for MV3
+- popup.html has no script tags - OK
+
+7. BACKGROUND SCRIPT ISSUES
+- Uses chrome.downloads API correctly
+- Has proper error handling with chrome.runtime.lastError
+- No CSP violations detected
+
+8. INJECT.JS ISSUES (MAIN WORLD)
+- Runs in page context (not extension context)
+- Uses native APIs safely
+- Hook implementation looks correct
+- No CSP violations (not subject to extension CSP)
+
+9. PERMISSIONS ANALYSIS
+- "downloads" permission: Required for chrome.downloads API ✓
+- "storage" permission: Not currently used in code
+- "activeTab" permission: Not necessary, should be removed (only needed for executeScript)
+- "https://web.telegram.org/*" host_permission: Correct
+
+10. web_accessible_resources
+- inject.js correctly declared
+- matches pattern correct
+- This is the only file that needs to be web_accessible
+
+SUMMARY OF ISSUES
+=================
+
+BLOCKING ISSUES (Will cause load failure or runtime errors):
+1. CSP Violation - innerHTML usage in content.js
+   - Line 156: btn.innerHTML = '<span>⬇</span>';
+   - Line 207: floatingBtn.innerHTML = '<span>⬇ TG</span>...';
+   - Line 220: drawer.innerHTML = `...`;
+   - Line 251: listEl.innerHTML = '<div class="tg-empty-hint">...';
+   - Line 255: listEl.innerHTML = '';
+   - Line 264: row.innerHTML = `...`;
+   
+   Impact: All DOM elements fail to render. Extension UI won't appear.
+
+2. Unused Permission: "activeTab"
+   - Not needed in this extension
+   - May trigger security warnings
+
+WARNINGS:
+1. Unused permission "storage" - code doesn't use localStorage/chrome.storage
+

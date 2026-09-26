@@ -185,12 +185,6 @@
 
   // ── Download handler ──────────────────────────────────────────────────────────
   window.addEventListener('message', async (e) => {
-    // Security: check origin
-    if (e.origin !== window.location.origin) {
-      console.log('[TG] Blocked download request from wrong origin:', e.origin);
-      return;
-    }
-
     if (!e.data || e.data.type !== 'TG_TRIGGER_DOWNLOAD') return;
     const { url, filename } = e.data.payload;
 
