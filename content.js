@@ -101,11 +101,11 @@
       safeFilename += ext;
     }
 
-    // Send to inject.js - use window.location.origin for security
+    // Send to inject.js
     window.postMessage({
       type: 'TG_TRIGGER_DOWNLOAD',
       payload: { url: targetUrl, filename: safeFilename }
-    }, window.location.origin);
+    }, '*');
   }
 
   function attachQuickButtons() {
