@@ -205,7 +205,7 @@
       console.log('[TG] ✓ Strategy 1: Direct match found!');
     }
 
-    // Strategy 2: Try fetching HTTP URL
+    // Strategy 2: Try fetching HTTP URL - skip blob:// and data: URLs
     if (!blob && requestUrl && !requestUrl.startsWith('data:') && !requestUrl.startsWith('blob:')) {
       try {
         console.log('[TG] Strategy 2: Attempting to fetch HTTP URL...');
@@ -220,6 +220,8 @@
       } catch (err) {
         console.log('[TG] Strategy 2 failed:', err.message);
       }
+    } else if (requestUrl?.startsWith('blob:')) {
+      console.log('[TG] Strategy 2 skipped: blob:// URL cannot be fetched, falling back to other strategies');
     }
 
     // Strategy 3: Check if any stored URL matches (strict pathname match)
