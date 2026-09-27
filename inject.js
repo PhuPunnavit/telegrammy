@@ -1,270 +1,336 @@
-// TG Downloader - Production-Ready Media Capture
-// Hooks MediaSource API (primary), SourceBuffer.appendBuffer (chunks), and blob URLs
-// This is where Telegram Web actually streams video - we capture segments here
+// TG Downloader - HTTP 206 Chunk Assembly with Bulletproof Byte-Range Handling
+// Captures media chunks, parses Content-Range headers, assembles in strict byte order
+
 (() => {
-  console.log('[TG] *** INJECT.JS STARTING ***');
+  'use strict';
+
+  console.log('[TG] *** HTTP 206 CHUNK ASSEMBLY INJECT.JS STARTING ***');
 
   // ============================================================================
-  // STORAGE: Separate tracking for MediaSource streams vs direct blobs
+  // STORAGE: Track chunks by byte range with strict ordering
   // ============================================================================
-
-  // Track MediaSource instances and their buffers
-  const mediaSourceBuffers = new Map(); // mediaSource -> { chunks: [], complete: bool }
-
-  // Track final blobs (after combining or direct capture)
-  const capturedBlobs = new Map(); // url/id -> { blob, type, timestamp, source }
-
-  // For debugging/stats
-  let mediaSourceCount = 0;
-  let appendBufferCount = 0;
-  let fetchCount = 0;
-  let xhrCount = 0;
+  const chunkRegistry = new Map(); // url -> { chunks: Map<startByte, chunkData>, totalSize, contentType, complete }
+  const capturedBlobs = new Map(); // id -> {blob, type, timestamp, source}
+  let chunkCounter = 0;
+  let downloadCounter = 0;
 
   // ============================================================================
-  // 1. MEDIASOURCE API HOOK - PRIMARY METHOD (where Telegram streams video)
+  // UTILITY: Parse Content-Range header
+  // Example: "bytes 0-524287/1048576" → {start: 0, end: 524287, total: 1048576}
   // ============================================================================
-  // Telegram uses MediaSource to stream video in chunks. By hooking SourceBuffer.appendBuffer,
-  // we can capture each chunk as it arrives and combine them into a complete video.
+  function parseContentRange(rangeHeader) {
+    if (!rangeHeader) return null;
 
-  console.log('[TG] Installing MediaSource hooks...');
+    const match = rangeHeader.match(/bytes\s+(\d+)-(\d+)\/(\d+)/i);
+    if (!match) {
+      console.warn('[TG] Invalid Content-Range format:', rangeHeader);
+      return null;
+    }
 
-  const origMediaSourceAddSourceBuffer = MediaSource.prototype.addSourceBuffer;
-  MediaSource.prototype.addSourceBuffer = function(mimeType) {
-    mediaSourceCount++;
-    const msId = mediaSourceCount;
-    console.log(`[TG-MS] #${msId} Created MediaSource for MIME: ${mimeType}`);
+    const start = parseInt(match[1], 10);
+    const end = parseInt(match[2], 10);
+    const total = parseInt(match[3], 10);
 
-    const sourceBuffer = origMediaSourceAddSourceBuffer.call(this, mimeType);
+    console.log(`[TG-RANGE] Parsed: bytes ${start}-${end}/${total}`);
 
-    // Hook appendBuffer to capture chunks
-    const origAppendBuffer = sourceBuffer.appendBuffer;
-    sourceBuffer.appendBuffer = function(data) {
-      appendBufferCount++;
+    return { start, end, total };
+  }
 
-      let bufferSize = 0;
-      if (data instanceof ArrayBuffer) {
-        bufferSize = data.byteLength;
-      } else if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
-        bufferSize = data.byteLength;
+  // ============================================================================
+  // CORE: Store chunk with strict byte-range tracking
+  // ============================================================================
+  async function storeChunk(url, data, contentType, rangeHeader) {
+    try {
+      chunkCounter++;
+      const chunkId = chunkCounter;
+
+      console.log(`[TG-CHUNK] #${chunkId} Storing chunk for URL: ${url.substring(0, 60)}`);
+
+      // Parse Content-Range header
+      const range = parseContentRange(rangeHeader);
+      if (!range) {
+        console.warn(`[TG-CHUNK] #${chunkId} No valid Content-Range header, treating as complete`);
+        // If no range header, treat as single complete blob
+        const blob = data instanceof Blob ? data : new Blob([data], { type: contentType });
+        const blobId = `single_${Date.now()}_${chunkId}`;
+        capturedBlobs.set(blobId, {
+          blob: blob,
+          type: contentType,
+          timestamp: Date.now(),
+          source: 'single_response'
+        });
+        return;
       }
 
-      console.log(`[TG-APPEND] #${appendBufferCount} Chunk size: ${bufferSize} bytes (MS #${msId})`);
-
-      // Store chunk for this MediaSource
-      if (!mediaSourceBuffers.has(this)) {
-        mediaSourceBuffers.set(this, {
-          chunks: [],
-          mimeType: mimeType,
-          totalSize: 0,
+      // Initialize registry for this URL if needed
+      if (!chunkRegistry.has(url)) {
+        chunkRegistry.set(url, {
+          chunks: new Map(), // startByte -> {data, end}
+          totalSize: range.total,
+          contentType: contentType,
           complete: false,
           createdAt: Date.now()
         });
+        console.log(`[TG-CHUNK] #${chunkId} Created new entry for URL, total size: ${range.total} bytes`);
       }
 
-      const buffer = mediaSourceBuffers.get(this);
+      const registry = chunkRegistry.get(url);
 
-      // Clone the data before storing (ArrayBuffer data might be reused)
-      let chunkCopy;
-      if (data instanceof ArrayBuffer) {
-        chunkCopy = new Uint8Array(new ArrayBuffer(data.byteLength));
-        chunkCopy.set(new Uint8Array(data));
+      // Validate total size consistency
+      if (registry.totalSize !== range.total) {
+        console.warn(`[TG-CHUNK] #${chunkId} Total size mismatch! Expected ${registry.totalSize}, got ${range.total}`);
+      }
+
+      // Store chunk by its start byte
+      const chunkSize = range.end - range.start + 1;
+
+      // Verify data size matches range
+      const dataSize = data instanceof Blob ? data.size : (data instanceof ArrayBuffer ? data.byteLength : data.length);
+      if (dataSize !== chunkSize) {
+        console.error(`[TG-CHUNK] #${chunkId} Data size mismatch! Expected ${chunkSize}, got ${dataSize}`);
+        return;
+      }
+
+      // Convert data to Uint8Array for storage
+      let uint8Data;
+      if (data instanceof Blob) {
+        uint8Data = new Uint8Array(await data.arrayBuffer());
+      } else if (data instanceof ArrayBuffer) {
+        uint8Data = new Uint8Array(data);
       } else if (data instanceof Uint8Array) {
-        chunkCopy = new Uint8Array(data);
+        uint8Data = data;
       } else {
-        chunkCopy = new Uint8Array(data);
+        uint8Data = new Uint8Array(data);
       }
 
-      buffer.chunks.push(chunkCopy);
-      buffer.totalSize += chunkCopy.byteLength;
+      // Store chunk
+      registry.chunks.set(range.start, {
+        data: uint8Data,
+        start: range.start,
+        end: range.end,
+        size: chunkSize
+      });
 
-      console.log(`[TG-APPEND] #${appendBufferCount} Total buffered: ${(buffer.totalSize / 1024 / 1024).toFixed(2)}MB in ${buffer.chunks.length} chunks`);
+      console.log(`[TG-CHUNK] #${chunkId} Stored: bytes ${range.start}-${range.end} (${chunkSize} bytes)`);
+      console.log(`[TG-CHUNK] #${chunkId} Total chunks: ${registry.chunks.size}`);
 
-      return origAppendBuffer.call(this, data);
-    };
+      // Check if download is complete
+      if (isDownloadComplete(url)) {
+        console.log(`[TG-CHUNK] ✓✓✓ DOWNLOAD COMPLETE - All byte ranges present!`);
+        registry.complete = true;
+        await combineAndStoreBlob(url);
+      }
 
-    // Hook endOfStream to know when streaming is complete
-    const origEndOfStream = this.endOfStream;
-    if (origEndOfStream) {
-      this.endOfStream = function(error) {
-        if (!error) {
-          console.log(`[TG-MS] #${msId} endOfStream called - stream complete`);
-          if (mediaSourceBuffers.has(sourceBuffer)) {
-            const buffer = mediaSourceBuffers.get(sourceBuffer);
-            buffer.complete = true;
+    } catch (e) {
+      console.error('[TG-CHUNK] Error storing chunk:', e.message);
+    }
+  }
 
-            // Combine chunks into final blob
-            if (buffer.chunks.length > 0) {
-              try {
-                const combinedBlob = new Blob(buffer.chunks, {
-                  type: buffer.mimeType || 'video/mp4'
-                });
+  // ============================================================================
+  // VALIDATION: Check if all byte ranges are present (no gaps)
+  // ============================================================================
+  function isDownloadComplete(url) {
+    const registry = chunkRegistry.get(url);
+    if (!registry) return false;
 
-                const blobId = `ms_${msId}_${Date.now()}`;
-                capturedBlobs.set(blobId, {
-                  blob: combinedBlob,
-                  type: buffer.mimeType || 'video/mp4',
-                  timestamp: Date.now(),
-                  source: 'MediaSource',
-                  chunkCount: buffer.chunks.length,
-                  totalSize: buffer.totalSize
-                });
+    console.log(`[TG-VALIDATE] Checking completeness for: ${url.substring(0, 50)}`);
+    console.log(`[TG-VALIDATE]   Total size: ${registry.totalSize} bytes`);
+    console.log(`[TG-VALIDATE]   Chunks stored: ${registry.chunks.size}`);
 
-                console.log(`[TG-MS] ✓✓✓ COMBINED: ${blobId}`);
-                console.log(`[TG-MS]   Size: ${(combinedBlob.size / 1024 / 1024).toFixed(2)}MB`);
-                console.log(`[TG-MS]   Chunks: ${buffer.chunks.length}`);
-                console.log(`[TG-MS]   Type: ${buffer.mimeType}`);
-              } catch (e) {
-                console.error(`[TG-MS] Error combining chunks: ${e.message}`);
-              }
-            }
-          }
+    // Get sorted chunk starts
+    const startBytes = Array.from(registry.chunks.keys()).sort((a, b) => a - b);
+
+    console.log(`[TG-VALIDATE]   Byte ranges: ${startBytes.map(s => {
+      const chunk = registry.chunks.get(s);
+      return `${s}-${chunk.end}`;
+    }).join(', ')}`);
+
+    // Verify byte 0 is present (critical for MP4/WebM headers)
+    if (!registry.chunks.has(0)) {
+      console.warn('[TG-VALIDATE] ✗ CRITICAL: Byte 0 missing! MP4/WebM headers not present');
+      return false;
+    }
+
+    // Check for gaps and verify sequential coverage
+    let expectedByte = 0;
+    for (const startByte of startBytes) {
+      if (startByte !== expectedByte) {
+        console.warn(`[TG-VALIDATE] ✗ GAP DETECTED: Expected byte ${expectedByte}, but next chunk starts at ${startByte}`);
+        return false;
+      }
+
+      const chunk = registry.chunks.get(startByte);
+      expectedByte = chunk.end + 1;
+    }
+
+    // Verify we've covered all bytes
+    if (expectedByte !== registry.totalSize) {
+      console.warn(`[TG-VALIDATE] ✗ INCOMPLETE: Expected to reach byte ${registry.totalSize}, only reached ${expectedByte}`);
+      return false;
+    }
+
+    console.log('[TG-VALIDATE] ✓ COMPLETE: All byte ranges present, no gaps');
+    return true;
+  }
+
+  // ============================================================================
+  // ASSEMBLY: Combine chunks in strict byte order into final Blob
+  // ============================================================================
+  async function combineAndStoreBlob(url) {
+    try {
+      downloadCounter++;
+      const downloadId = downloadCounter;
+
+      const registry = chunkRegistry.get(url);
+      if (!registry) {
+        console.error('[TG-COMBINE] Registry not found for URL');
+        return;
+      }
+
+      console.log(`[TG-COMBINE] #${downloadId} Starting blob combination`);
+      console.log(`[TG-COMBINE] #${downloadId} Total chunks: ${registry.chunks.size}`);
+      console.log(`[TG-COMBINE] #${downloadId} Expected total size: ${registry.totalSize} bytes`);
+
+      // Get chunks sorted by start byte
+      const chunks = Array.from(registry.chunks.values())
+        .sort((a, b) => a.start - b.start);
+
+      // Verify sequential order
+      console.log('[TG-COMBINE] #' + downloadId + ' Chunk order:');
+      chunks.forEach((chunk, idx) => {
+        console.log(`[TG-COMBINE] #${downloadId}   [${idx}] bytes ${chunk.start}-${chunk.end} (${chunk.size} bytes)`);
+      });
+
+      // Combine chunks into single Uint8Array
+      const combinedArray = new Uint8Array(registry.totalSize);
+      let offset = 0;
+
+      for (const chunk of chunks) {
+        // Verify no overlap or gap
+        if (chunk.start !== offset) {
+          console.error(`[TG-COMBINE] #${downloadId} Chunk position mismatch: expected offset ${offset}, got chunk.start ${chunk.start}`);
+          throw new Error('Chunk ordering violation');
         }
-        return origEndOfStream?.call(this, error);
-      };
-    }
 
-    return sourceBuffer;
-  };
+        // Copy chunk data to correct position
+        combinedArray.set(chunk.data, offset);
+        offset += chunk.size;
 
-  console.log('[TG] MediaSource hooks installed');
-
-  // ============================================================================
-  // 2. BLOB URL INTERCEPTION - Secondary method (direct blob URLs)
-  // ============================================================================
-  // Catch blob: URLs created via URL.createObjectURL (some files load this way)
-
-  console.log('[TG] Installing URL.createObjectURL hook...');
-  const origCreateObjectURL = URL.createObjectURL;
-  URL.createObjectURL = function(obj) {
-    if (obj instanceof Blob) {
-      console.log(`[TG-BLOB] createObjectURL: size=${obj.size}, type=${obj.type}`);
-
-      if (obj.size > 100000) { // Only capture large blobs (likely videos)
-        const blobId = `blob_${Date.now()}`;
-        capturedBlobs.set(blobId, {
-          blob: obj,
-          type: obj.type || 'video/mp4',
-          timestamp: Date.now(),
-          source: 'URL.createObjectURL',
-          chunkCount: 1,
-          totalSize: obj.size
-        });
-
-        console.log(`[TG-BLOB] ✓ CAPTURED: ${blobId} (${(obj.size / 1024 / 1024).toFixed(2)}MB)`);
+        console.log(`[TG-COMBINE] #${downloadId} Copied bytes ${chunk.start}-${chunk.end} to array offset ${offset - chunk.size}`);
       }
+
+      // Verify final size
+      if (offset !== registry.totalSize) {
+        console.error(`[TG-COMBINE] #${downloadId} Size mismatch after combining: expected ${registry.totalSize}, got ${offset}`);
+        throw new Error('Combined size mismatch');
+      }
+
+      // Create final Blob
+      const finalBlob = new Blob([combinedArray], { type: registry.contentType });
+
+      const blobId = `combined_${downloadId}_${Date.now()}`;
+      capturedBlobs.set(blobId, {
+        blob: finalBlob,
+        type: registry.contentType,
+        timestamp: Date.now(),
+        source: 'combined_chunks',
+        chunkCount: chunks.length,
+        byteCount: registry.totalSize
+      });
+
+      console.log(`[TG-COMBINE] ✓✓✓ BLOB CREATED: ${blobId}`);
+      console.log(`[TG-COMBINE] #${downloadId}   Size: ${(finalBlob.size / 1024 / 1024).toFixed(2)}MB`);
+      console.log(`[TG-COMBINE] #${downloadId}   Type: ${registry.contentType}`);
+      console.log(`[TG-COMBINE] #${downloadId}   Chunks assembled: ${chunks.length}`);
+
+      notifyMediaDetected(blobId, registry.contentType, finalBlob.size);
+
+    } catch (e) {
+      console.error('[TG-COMBINE] Error combining blob:', e.message);
     }
-
-    return origCreateObjectURL.call(URL, obj);
-  };
-
-  console.log('[TG] URL.createObjectURL hook installed');
+  }
 
   // ============================================================================
-  // 3. FETCH INTERCEPTION - Tertiary method (for direct video URLs)
+  // HOOK: Intercept fetch responses and extract chunks
   // ============================================================================
-  // Some media might be fetched directly as complete responses
-
-  console.log('[TG] Installing fetch hook...');
   const origFetch = window.fetch;
   window.fetch = async function(...args) {
-    fetchCount++;
-    const urlArg = args[0];
-    const url = typeof urlArg === 'string' ? urlArg : (urlArg?.url || 'unknown');
+    const response = await origFetch.apply(this, args);
 
     try {
-      const response = await origFetch.apply(this, args);
+      const url = args[0] instanceof Request ? args[0].url : String(args[0] || '');
+      const contentType = response.headers.get('content-type') || '';
+      const contentRange = response.headers.get('content-range');
+      const status = response.status;
 
-      // Only process media responses
-      const ct = response.headers.get('content-type') || '';
-      if (ct.includes('video') || ct.includes('audio')) {
-        console.log(`[TG-FETCH] #${fetchCount} Media response: ${String(url).substring(0, 80)}`);
-        console.log(`[TG-FETCH] #${fetchCount} Status: ${response.status}, Content-Type: ${ct}`);
+      const isMedia = contentType.includes('video') || contentType.includes('audio');
 
-        // Clone and read blob
+      if (isMedia && (status === 200 || status === 206)) {
         const cloned = response.clone();
-        try {
-          const blob = await cloned.blob();
-          if (blob.size > 100000) {
-            const blobId = `fetch_${Date.now()}_${fetchCount}`;
-            capturedBlobs.set(blobId, {
-              blob: blob,
-              type: ct,
-              timestamp: Date.now(),
-              source: 'Fetch',
-              chunkCount: 1,
-              totalSize: blob.size
-            });
-            console.log(`[TG-FETCH] ✓ CAPTURED: ${blobId} (${(blob.size / 1024 / 1024).toFixed(2)}MB)`);
-          }
-        } catch (e) {
-          console.log(`[TG-FETCH] #${fetchCount} Blob read error: ${e.message}`);
-        }
+        const blob = await cloned.blob();
+
+        console.log(`[TG-FETCH] ${status} ${contentType} | Size: ${blob.size} | Range: ${contentRange || 'none'}`);
+
+        // Store chunk with range header
+        await storeChunk(url, blob, contentType, contentRange);
+
+        notifyMediaDetected(url, contentType, blob.size);
       }
 
       return response;
     } catch (e) {
-      console.log(`[TG-FETCH] #${fetchCount} Fetch error: ${e.message}`);
-      throw e;
+      console.error('[TG-FETCH] Error in fetch hook:', e.message);
+      return response;
     }
   };
 
-  console.log('[TG] Fetch hook installed');
-
   // ============================================================================
-  // 4. XHR INTERCEPTION - Fallback method
+  // HOOK: Intercept XHR responses
   // ============================================================================
-  // XMLHttpRequest for older code or special scenarios
-
-  console.log('[TG] Installing XHR hook...');
   const origXhrOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-    this._tgXhrUrl = url;
+    this._tgUrl = url;
     return origXhrOpen.apply(this, [method, url, ...rest]);
   };
 
   const origXhrSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function(...args) {
     const xhr = this;
-    const url = this._tgXhrUrl;
-    xhrCount++;
-    const xhrId = xhrCount;
 
-    xhr.addEventListener('load', function() {
-      const ct = xhr.getResponseHeader('content-type') || '';
-      if ((ct.includes('video') || ct.includes('audio')) && xhr.status === 200) {
-        console.log(`[TG-XHR] #${xhrId} Media response: ${String(url).substring(0, 80)}`);
+    xhr.addEventListener('readystatechange', function() {
+      if (xhr.readyState === 4 && (xhr.status === 200 || xhr.status === 206)) {
+        const contentType = xhr.getResponseHeader('content-type') || '';
+        const contentRange = xhr.getResponseHeader('content-range');
+        const isMedia = contentType.includes('video') || contentType.includes('audio');
 
-        let blob = null;
-        if (xhr.response instanceof Blob) {
-          blob = xhr.response;
-        } else if (xhr.response instanceof ArrayBuffer) {
-          blob = new Blob([xhr.response], { type: ct });
-        } else if (xhr.response instanceof Uint8Array) {
-          blob = new Blob([xhr.response], { type: ct });
-        }
+        if (isMedia && xhr.response) {
+          try {
+            let blob = null;
+            if (xhr.response instanceof Blob) {
+              blob = xhr.response;
+            } else if (xhr.response instanceof ArrayBuffer) {
+              blob = new Blob([xhr.response], { type: contentType });
+            }
 
-        if (blob && blob.size > 100000) {
-          const blobId = `xhr_${Date.now()}_${xhrId}`;
-          capturedBlobs.set(blobId, {
-            blob: blob,
-            type: ct,
-            timestamp: Date.now(),
-            source: 'XHR',
-            chunkCount: 1,
-            totalSize: blob.size
-          });
-          console.log(`[TG-XHR] ✓ CAPTURED: ${blobId} (${(blob.size / 1024 / 1024).toFixed(2)}MB)`);
+            if (blob) {
+              const finalUrl = xhr.responseURL || xhr._tgUrl;
+              console.log(`[TG-XHR] ${xhr.status} ${contentType} | Size: ${blob.size} | Range: ${contentRange || 'none'}`);
+
+              storeChunk(finalUrl, blob, contentType, contentRange);
+              notifyMediaDetected(finalUrl, contentType, blob.size);
+            }
+          } catch (e) {
+            console.error('[TG-XHR] Error in XHR hook:', e.message);
+          }
         }
       }
-    }, { once: true });
+    });
 
     return origXhrSend.apply(this, args);
   };
 
-  console.log('[TG] XHR hook installed');
-
   // ============================================================================
-  // 5. MESSAGE HANDLER - Download trigger from content script
+  // DOWNLOAD HANDLER
   // ============================================================================
   window.addEventListener('message', async (e) => {
     if (!e.data || e.data.type !== 'TG_TRIGGER_DOWNLOAD') return;
@@ -272,99 +338,100 @@
     const { filename } = e.data.payload;
 
     console.log('[TG] *** DOWNLOAD TRIGGERED ***');
-    console.log(`[TG] Total captured blobs: ${capturedBlobs.size}`);
-    console.log(`[TG] MediaSources tracked: ${mediaSourceBuffers.size}`);
-    console.log(`[TG] Stats: FETCH=${fetchCount}, XHR=${xhrCount}, MS=${mediaSourceCount}, Appends=${appendBufferCount}`);
+    console.log('[TG] Captured blobs:', capturedBlobs.size);
 
-    // Log all captured blobs
-    for (const [id, data] of capturedBlobs) {
-      console.log(`[TG]   ${id}: ${(data.totalSize / 1024 / 1024).toFixed(2)}MB (${data.source}, ${data.chunkCount} chunks)`);
-    }
+    Array.from(capturedBlobs.entries()).forEach(([id, entry]) => {
+      console.log(`[TG]   ${id}: ${(entry.blob.size / 1024 / 1024).toFixed(2)}MB (${entry.source})`);
+    });
 
-    // Find largest blob
-    let largestEntry = null;
-    let largestSize = 0;
-    for (const [id, data] of capturedBlobs) {
-      if (data.totalSize > largestSize) {
-        largestSize = data.totalSize;
-        largestEntry = [id, data];
+    let blob = null;
+
+    // Get largest blob
+    if (capturedBlobs.size > 0) {
+      let largest = null;
+      let largestSize = 0;
+
+      for (const [_, entry] of capturedBlobs) {
+        if (entry.blob.size > largestSize) {
+          largestSize = entry.blob.size;
+          largest = entry;
+        }
       }
+
+      blob = largest?.blob;
     }
 
-    if (!largestEntry) {
-      console.log('[TG] ✗ NO BLOBS CAPTURED - Check console for errors above');
-      alert('No media captured. Check console for details.');
+    if (!blob) {
+      console.log('[TG] ✗ NO MEDIA CAPTURED');
+      alert('No media captured. Please play a video first.');
       return;
     }
 
-    const [, blobData] = largestEntry;
-    const { blob, type } = blobData;
+    console.log('[TG] ✓ Downloading:', (blob.size / 1024 / 1024).toFixed(2), 'MB');
 
-    console.log(`[TG] ✓ Downloading largest blob: ${(blob.size / 1024 / 1024).toFixed(2)}MB (${type})`);
+    // Determine extension
+    let ext = '.webm';
+    if (blob.type.includes('mp4')) ext = '.mp4';
+    else if (blob.type.includes('webm')) ext = '.webm';
 
-    try {
-      const downloadUrl = origCreateObjectURL.call(URL, blob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = filename || `tg_${Date.now()}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+    let safeName = (filename || `tg_${Date.now()}`).replace(/[<>:"/\\|?*]/g, '_');
+    if (!safeName.includes('.')) safeName += ext;
 
-      // Clean up object URL after a delay
-      setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    // Create download
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = safeName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
 
-      console.log('[TG] ✓ DOWNLOAD COMPLETE');
-    } catch (e) {
-      console.error(`[TG] Download failed: ${e.message}`);
-      alert(`Download failed: ${e.message}`);
-    }
+    console.log('[TG] ✓ Download complete');
   });
 
   // ============================================================================
-  // 6. EXPOSE DEBUGGING API
+  // DEBUG API
   // ============================================================================
   window.__TG_DEBUG = {
-    capturedBlobs: capturedBlobs,
-    mediaSourceBuffers: mediaSourceBuffers,
-    getStats: () => ({
-      capturedBlobCount: capturedBlobs.size,
-      mediaSourceCount: mediaSourceCount,
-      appendBufferCount: appendBufferCount,
-      fetchCount: fetchCount,
-      xhrCount: xhrCount,
-      largestBlob: Array.from(capturedBlobs.values()).reduce((max, b) =>
-        b.totalSize > (max?.totalSize || 0) ? b : max, null)
-    }),
+    getChunks: (url) => {
+      const reg = chunkRegistry.get(url);
+      if (!reg) return null;
+      return {
+        chunks: Array.from(reg.chunks.entries()).map(([start, chunk]) => ({
+          start,
+          end: chunk.end,
+          size: chunk.size
+        })),
+        totalSize: reg.totalSize,
+        complete: reg.complete
+      };
+    },
+
     listBlobs: () => {
-      const blobs = [];
-      for (const [id, data] of capturedBlobs) {
-        blobs.push({
+      const list = [];
+      for (const [id, entry] of capturedBlobs) {
+        list.push({
           id,
-          size: `${(data.totalSize / 1024 / 1024).toFixed(2)}MB`,
-          type: data.type,
-          source: data.source,
-          chunks: data.chunkCount
+          size: (entry.blob.size / 1024 / 1024).toFixed(2) + ' MB',
+          source: entry.source
         });
       }
-      return blobs;
-    },
-    downloadBlob: (id) => {
-      const data = capturedBlobs.get(id);
-      if (!data) {
-        console.log(`[TG] Blob ${id} not found`);
-        return;
-      }
-      const url = origCreateObjectURL.call(URL, data.blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `tg_${id}.mp4`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return list;
     }
   };
 
-  console.log('[TG] *** INJECT.JS READY ***');
-  console.log('[TG] Capture methods: MediaSource (primary), Blob URL, Fetch, XHR');
-  console.log('[TG] Debug API: window.__TG_DEBUG.getStats(), listBlobs(), downloadBlob(id)');
+  function notifyMediaDetected(url, type, size) {
+    window.postMessage({
+      type: 'TG_MEDIA_DETECTED',
+      payload: { url, type, size, timestamp: Date.now() }
+    }, '*');
+  }
+
+  // Unblock context menu
+  ['contextmenu', 'copy', 'selectstart', 'dragstart'].forEach(evt => {
+    window.addEventListener(evt, e => e.stopImmediatePropagation(), true);
+  });
+
+  console.log('[TG] ✓ inject.js ready - HTTP 206 chunk assembly active');
+  console.log('[TG] Debug API: window.__TG_DEBUG');
 })();
